@@ -37,6 +37,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -76,9 +77,10 @@ func (c *config) password() string {
 // stdin when sign is true, and returns combined output.
 func (c *config) run(sign bool, args ...string) string {
 	full := append([]string{}, args...)
-	full = append(full, "-remote", c.remote, "-chainid", chainID)
+	full = append(full, "-remote", c.remote)
 	if sign {
-		full = append(full, "-home", c.home, "-insecure-password-stdin")
+		// Only maketx accepts -chainid; query commands reject it.
+		full = append(full, "-chainid", chainID, "-home", c.home, "-insecure-password-stdin")
 	}
 	cmd := exec.Command(c.gnokey, full...)
 	if sign {
@@ -121,19 +123,28 @@ func (c *config) query(data string) string {
 
 func (c *config) evalString(expr string) string {
 	out := c.query(c.pkgPath + "." + expr)
-	// Extract the quoted payload from the qeval result if present.
+	// String results come back quoted: ("..." string). Numeric results come
+	// back as (123 int64) / (123 uint64) — extract the bare value either way.
 	if i := strings.Index(out, `"`); i >= 0 {
 		if j := strings.LastIndex(out, `"`); j > i {
 			return out[i+1 : j]
 		}
+	}
+	if m := regexp.MustCompile(`\((-?\d+)\s+(?:u?int\d+)\)`).FindStringSubmatch(out); m != nil {
+		return m[1]
 	}
 	return out
 }
 
 func (c *config) questCount() uint64 {
 	out := c.query(c.pkgPath + ".QuestCount()")
-	digits := regexp.MustCompile(`\d+`).FindString(out)
-	n, err := strconv.ParseUint(digits, 10, 64)
+	// qeval output is "height: 0\ndata: (2 uint64)" — parse the data line,
+	// not the first digits in the output (which are the height).
+	m := regexp.MustCompile(`\((\d+)\s+uint64\)`).FindStringSubmatch(out)
+	if m == nil {
+		fatalf("cannot parse QuestCount from %q", out)
+	}
+	n, err := strconv.ParseUint(m[1], 10, 64)
 	if err != nil {
 		fatalf("cannot parse QuestCount from %q", out)
 	}
@@ -215,6 +226,24 @@ func main() {
 	}
 }
 
+// waitStatus polls GetQuest until the quest shows the wanted status.
+// The public RPC is served by a node pool behind a CDN; a transaction can
+// commit on one node while a follow-up call lands on a node that has not
+// seen it yet. Waiting for the expected state keeps the demo flow reliable.
+func (c *config) waitStatus(id uint64, want string) {
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		got := c.evalString(fmt.Sprintf("GetQuest(%d)", id))
+		if strings.Contains(got, "["+want+"]") {
+			return
+		}
+		if time.Now().After(deadline) {
+			fatalf("timeout waiting for quest #%d to become %s (last seen: %s)", id, want, got)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
 // runDemo executes the complete quest lifecycle with the project keys and
 // prints a summary with every transaction hash.
 func runDemo(c *config) {
@@ -230,11 +259,13 @@ func runDemo(c *config) {
 		"Translate the 12-item Gnome Tavern menu into Gnomish and publish the result.",
 		"100000")
 	fmt.Println("  tx:", h)
+	c.waitStatus(id, "OPEN")
 	fmt.Println("  board:", c.evalString(fmt.Sprintf("GetQuest(%d)", id)))
 
 	fmt.Printf("\n[2/4] agent claims quest #%d\n", id)
 	h = c.call(agentKey, "ClaimQuest", "", strconv.FormatUint(id, 10))
 	fmt.Println("  tx:", h)
+	c.waitStatus(id, "CLAIMED")
 
 	fmt.Printf("\n[3/4] agent submits proof for quest #%d\n", id)
 	proofText := "Gnomish menu translation, 12 items, delivered by tavern-agent."
@@ -245,6 +276,7 @@ func runDemo(c *config) {
 		hex.EncodeToString(sum[:]))
 	fmt.Println("  tx:", h)
 	fmt.Println("  proof sha256:", hex.EncodeToString(sum[:]))
+	c.waitStatus(id, "SUBMITTED")
 
 	fmt.Printf("\n[4/4] poster confirms completion — bounty released, reputation +1\n")
 	h = c.call(posterKey, "ConfirmComplete", "", strconv.FormatUint(id, 10))

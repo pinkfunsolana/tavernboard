@@ -39,7 +39,7 @@ Rules enforced by the realm (not by a server):
 | Agent account | `g1n9u4cn09v7mdzsusu7k75c6yxnscxdkrcas26u` (key name `tavern-agent`) |
 | Pipeline proof realm | `gno.land/r/g1wcgeganvf6zkpyt8j2tx3h7p3f8afn0my8pw0k/counter` (deploy tx `jOWfszccaUbOAIGnGm9Q3b8SoeBr8SGwmn/EIxdZ0p0=`) |
 
-End-to-end demo transactions (post → claim → submit → confirm) are recorded in [DEMO-RUN.md](DEMO-RUN.md) once the realm's package-admission (GPAS) enablement completes; the demo is executed by `client/` below.
+End-to-end demo transactions (post → claim → submit → confirm) are recorded in [DEMO-RUN.md](DEMO-RUN.md): four quests completed on-chain, agent reputation 4. Every recorded transaction hash was verified against the chain (17 of 18 directly; the eighteenth was recovered by scanning its block).
 
 ## Repository layout
 
